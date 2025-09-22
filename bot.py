@@ -23,25 +23,37 @@ TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
 CHAT_ID = 7116219655
 OWM_API_KEY = "2754828f53424769b54b440f1253486e"
 NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
-CITY = "Sion"
+
+CITIES = [
+    {"name": "Sierre", "zip": "3960"},
+    {"name": "Sion", "zip": "1950"},
+    {"name": "Martigny", "zip": "1920"},
+    {"name": "Monthey", "zip": "1870"},
+]
 
 bot = Bot(token=TOKEN)
 nest_asyncio.apply()  # permet asyncio dans Render
 
 # ===================== MÉTÉO =====================
-def get_weather():
+def get_weather_for_city(city_name):
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={OWM_API_KEY}&units=metric&lang=fr"
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={OWM_API_KEY}&units=metric&lang=fr"
         r = requests.get(url, timeout=10).json()
-        desc = r['weather'][0]['description']
+        main_weather = r['weather'][0]['main']
+        description = r['weather'][0]['description']
         temp = r['main']['temp']
-        return f"Météo à {CITY} : {desc}, {temp}°C"
+        feels_like = r['main'].get('feels_like', temp)
+        humidity = r['main'].get('humidity', 'N/A')
+        wind = r.get('wind', {}).get('speed', 'N/A')
+
+        return f"{city_name} : {main_weather} ({description})\nTempérature : {temp}°C (ressentie {feels_like}°C)\nHumidité : {humidity}% | Vent : {wind} m/s"
     except:
-        return "Erreur récupération météo"
+        return f"{city_name} : erreur récupération météo"
 
 async def send_weather():
-    msg = get_weather()
-    await bot.send_message(chat_id=CHAT_ID, text=msg)
+    msgs = [get_weather_for_city(city["name"]) for city in CITIES]
+    full_msg = "\n\n".join(msgs)
+    await bot.send_message(chat_id=CHAT_ID, text=full_msg)
 
 # ===================== NEWS =====================
 SEEN_NEWS_FILE = "seen_urls.json"
@@ -136,13 +148,10 @@ async def send_quote():
 async def scheduler_loop():
     while True:
         try:
-            # Exécution séquentielle pour éviter doublons rapides
-            await send_quote()    # Citation
-            await send_weather()  # Météo
-            await send_news()     # News
+            await asyncio.gather(send_quote(), send_weather(), send_news())
         except Exception as e:
             logging.error(f"Erreur dans scheduler_loop: {e}")
-        await asyncio.sleep(5*60)  # pause 5 minutes
+        await asyncio.sleep(15*60)  # toutes les 15 min
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
