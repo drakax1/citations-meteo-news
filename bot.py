@@ -136,13 +136,13 @@ async def send_quote():
 async def scheduler_loop():
     while True:
         try:
-            # Exécution séquentielle pour éviter conflits
-            await send_quote()
-            await send_weather()
-            await send_news()
+            # Exécution séquentielle pour éviter doublons rapides
+            await send_quote()    # Citation
+            await send_weather()  # Météo
+            await send_news()     # News
         except Exception as e:
             logging.error(f"Erreur dans scheduler_loop: {e}")
-        await asyncio.sleep(5*60)  # intervalle 5 minutes pour test
+        await asyncio.sleep(5*60)  # pause 5 minutes
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
