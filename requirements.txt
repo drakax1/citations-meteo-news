@@ -1,0 +1,4 @@
+python-telegram-bot==3.19.0
+requests
+schedule
+flask
