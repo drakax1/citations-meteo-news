@@ -3,3 +3,4 @@ requests
 schedule
 flask
 nest-asyncio
+httpx~=0.24.1
