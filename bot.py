@@ -22,63 +22,50 @@ CITY = "Sion,CH"
 bot = Bot(token=TOKEN)
 
 # ===================== MÉTÉO =====================
+last_weather = None
+
 def get_weather():
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={OWM_API_KEY}&units=metric&lang=fr"
         r = requests.get(url).json()
         desc = r['weather'][0]['description']
         temp = r['main']['temp']
-        logging.info("Météo récupérée")
-        return f"🌤️ Météo à {CITY} : {desc}, {temp}°C"
+        msg = f"🌤️ Météo à {CITY} : {desc}, {temp}°C"
+        logging.info(f"Météo récupérée: {msg}")
+        return msg
     except Exception as e:
         logging.error(f"Erreur météo: {e}")
         return "Erreur récupération météo"
 
-def get_alerts():
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/onecall?lat=46.233&lon=7.366&appid={OWM_API_KEY}&lang=fr"
-        r = requests.get(url).json()
-        if "alerts" in r:
-            alerts = [a['description'] for a in r['alerts']]
-            logging.info("Alertes météo récupérées")
-            return "\n⚠️ ALERTE MÉTÉO :\n" + "\n".join(alerts)
-        return None
-    except Exception as e:
-        logging.error(f"Erreur alertes météo: {e}")
-        return None
-
 async def send_weather():
+    global last_weather
     msg = get_weather()
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
-        logging.info("Météo envoyée")
-        alert = get_alerts()
-        if alert:
-            await bot.send_message(chat_id=CHAT_ID, text=alert)
-            logging.info("Alertes envoyées")
-    except Exception as e:
-        logging.error(f"Erreur envoi météo: {e}")
+    if msg != last_weather:
+        try:
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+            logging.info("Météo envoyée")
+            last_weather = msg
+        except Exception as e:
+            logging.error(f"Erreur envoi météo: {e}")
+    else:
+        logging.info("Météo identique, pas de doublon envoyé")
 
 # ===================== NEWS =====================
+last_news_ids = set()
+
 def get_news():
+    global last_news_ids
     try:
-        now = datetime.now(timezone.utc)
-        last_hour = now - timedelta(hours=1)
-        url = (
-            f"https://newsapi.org/v2/everything?"
-            f"language=fr&"
-            f"from={last_hour.isoformat()}&"
-            f"to={now.isoformat()}&"
-            f"sortBy=publishedAt&"
-            f"pageSize=10&"
-            f"apiKey={NEWS_API_KEY}"
-        )
+        url = f"https://newsapi.org/v2/top-headlines?language=fr&country=ch&pageSize=10&apiKey={NEWS_API_KEY}"
         r = requests.get(url).json()
-        articles = r.get("articles", [])[:10]
-        if not articles:
-            return "📰 Pas de nouvelles fraîches cette heure-ci."
-        logging.info("News récupérées")
-        return "📰 Dernières actus :\n" + "\n".join([a['title'] for a in articles])
+        articles = r.get("articles", [])
+        new_articles = [a for a in articles if a['title'] not in last_news_ids]
+        if not new_articles:
+            logging.info("Aucune nouvelle unique à envoyer")
+            return "📰 Pas de nouvelles fraîches..."
+        last_news_ids.update([a['title'] for a in new_articles])
+        logging.info(f"{len(new_articles)} nouvelles récupérées")
+        return "📰 Dernières actus :\n" + "\n".join([a['title'] for a in new_articles])
     except Exception as e:
         logging.error(f"Erreur news: {e}")
         return "Erreur récupération news"
@@ -92,35 +79,30 @@ async def send_news():
         logging.error(f"Erreur envoi news: {e}")
 
 # ===================== CITATIONS =====================
-def get_quote():
-    try:
-        r = requests.get("https://api.quotable.io/random")
-        data = r.json()
-        logging.info("Citation récupérée")
-        return f"💡 Citation : {data['content']} — {data['author']}"
-    except Exception as e:
-        logging.error(f"Erreur citation: {e}")
-        return "Erreur récupération citation"
-
 async def send_quote():
-    msg = get_quote()
     try:
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
-        logging.info("Citation envoyée")
+        r = requests.get("https://api.quotable.io/random", timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+            logging.info("Citation envoyée")
+        else:
+            logging.error(f"Erreur API citation status code: {r.status_code}")
     except Exception as e:
-        logging.error(f"Erreur envoi citation: {e}")
+        logging.error(f"Erreur récupération citation: {e}")
 
-# ===================== PLANIFICATION =====================
+# ===================== SCHEDULER 30MIN =====================
 async def scheduler_loop():
     while True:
-        now = datetime.now()
-        if now.minute == 0:
-            await send_weather()
-        elif now.minute == 5:
-            await send_news()
-        elif now.minute == 10:
-            await send_quote()
-        await asyncio.sleep(60)
+        logging.info("Scheduler tick")
+        await asyncio.gather(
+            send_weather(),
+            send_news(),
+            send_quote()
+        )
+        logging.info("Attente 30 minutes")
+        await asyncio.sleep(30*60)  # 30 minutes
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
