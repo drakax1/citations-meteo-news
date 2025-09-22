@@ -115,24 +115,30 @@ async def send_news():
 
 # ===================== CITATIONS =====================
 async def send_quote():
-    r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
-    data = r.json()
-    original = data.get("content")
-    author = data.get("author", "Inconnu")
+    try:
+        r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
+        data = r.json()
+        original = data.get("content")
+        author = data.get("author", "Inconnu")
 
-    if original:
-        traduction = GoogleTranslator(source='en', target='fr').translate(original)
-        msg = f"""💡 Citation originale :
+        if original:
+            traduction = GoogleTranslator(source='en', target='fr').translate(original)
+            msg = f"""💡 Citation originale :
 {original}
 
 🇫🇷 Traduction :
 {traduction} — {author}"""
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
+            await bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        logging.error(f"Erreur récupération citation: {e}")
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
     while True:
-        await asyncio.gather(send_weather(), send_news(), send_quote())
+        try:
+            await asyncio.gather(send_weather(), send_news(), send_quote())
+        except Exception as e:
+            logging.error(f"Erreur dans scheduler_loop: {e}")
         await asyncio.sleep(30*60)  # toutes les 30 min
 
 # ===================== KEEP ALIVE =====================
