@@ -6,6 +6,7 @@ from telegram import Bot
 from flask import Flask
 from threading import Thread
 import logging
+from datetime import datetime, timedelta
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -44,29 +45,45 @@ async def send_weather():
             pass
 
 # ===================== NEWS =====================
+last_news_ids = set()
+news_reset_time = datetime.utcnow() + timedelta(hours=24)
+
 async def send_news():
+    global last_news_ids, news_reset_time
     try:
-        url = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=10&apiKey={NEWS_API_KEY}"
+        # Reset des news toutes les 24h pour ne pas saturer
+        if datetime.utcnow() >= news_reset_time:
+            last_news_ids = set()
+            news_reset_time = datetime.utcnow() + timedelta(hours=24)
+
+        # News "everything" pour maximiser la probabilité d'avoir au moins un article
+        url = f"https://newsapi.org/v2/everything?q=bitcoin&pageSize=10&apiKey={NEWS_API_KEY}"
         r = requests.get(url, timeout=10).json()
         articles = r.get("articles", [])
-        if not articles:
+        new_articles = [a for a in articles if a['title'] not in last_news_ids]
+
+        if not new_articles:
             msg = "📰 Pas de nouvelles disponibles"
         else:
-            titles = [a['title'] for a in articles]
+            last_news_ids.update([a['title'] for a in new_articles])
+            titles = [a['title'] for a in new_articles]
             msg = "📰 Dernières actus :\n" + "\n".join(titles)
+
         await bot.send_message(chat_id=CHAT_ID, text=msg)
-    except:
-        await bot.send_message(chat_id=CHAT_ID, text="Erreur récupération news")
+        logging.info(f"News envoyée: {msg}")
+    except Exception as e:
+        await bot.send_message(chat_id=CHAT_ID, text=f"Erreur récupération news: {e}")
 
 # ===================== CITATIONS =====================
 async def send_quote():
     try:
-        r = requests.get("https://api.quotable.io/random", timeout=5)
+        r = requests.get("https://api.quotable.io/random", timeout=10)
         data = r.json()
         msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
         await bot.send_message(chat_id=CHAT_ID, text=msg)
-    except:
-        await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
+        logging.info(f"Citation envoyée: {msg}")
+    except Exception as e:
+        await bot.send_message(chat_id=CHAT_ID, text=f"💡 Pas de citation disponible: {e}")
 
 # ===================== SCHEDULER 30MIN =====================
 async def scheduler_loop():
