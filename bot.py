@@ -8,10 +8,14 @@ from threading import Thread
 import logging
 import json
 import time
+import urllib3
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Désactiver les warnings SSL pour quotable.io
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ===================== CONFIG =====================
 TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
@@ -23,8 +27,6 @@ CITY = "Sion"
 bot = Bot(token=TOKEN)
 
 # ===================== MÉTÉO =====================
-last_weather = None
-
 def get_weather():
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={OWM_API_KEY}&units=metric&lang=fr"
@@ -36,14 +38,11 @@ def get_weather():
         return "Erreur récupération météo"
 
 async def send_weather():
-    global last_weather
     msg = get_weather()
-    if msg != last_weather:
-        try:
-            await bot.send_message(chat_id=CHAT_ID, text=msg)
-            last_weather = msg
-        except:
-            pass
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=msg)
+    except Exception as e:
+        logging.error(f"Erreur envoi météo: {e}")
 
 # ===================== NEWS =====================
 SEEN_FILE = "seen_urls.json"
@@ -68,12 +67,12 @@ async def send_news():
         new_articles = []
 
         # FR toutes catégories
-        url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=5&apiKey={NEWS_API_KEY}"
+        url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}"
         new_articles.extend(requests.get(url_fr, timeout=10).json().get("articles", []))
 
-        # EN : health, science, technology
+        # EN catégories health, science, technology
         for cat in ["health", "science", "technology"]:
-            url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=3&apiKey={NEWS_API_KEY}"
+            url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
             new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
 
         sent_count = 0
@@ -97,7 +96,7 @@ async def send_news():
                 else:
                     await bot.send_message(chat_id=CHAT_ID, text=msg[:4000])
                 sent_count += 1
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             except Exception as e:
                 logging.error(f"Erreur envoi news: {e}")
 
@@ -113,38 +112,38 @@ async def send_news():
 # ===================== CITATIONS =====================
 async def send_quote():
     try:
-        r = requests.get("https://api.quotable.io/random", timeout=5)
+        r = requests.get("https://api.quotable.io/random", timeout=10, verify=False)
         data = r.json()
-        msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
+        content = data.get("content")
+        author = data.get("author")
+        if not content:
+            raise Exception("Contenu vide")
+        msg = f"💡 Citation : {content} — {author if author else 'Inconnu'}"
         await bot.send_message(chat_id=CHAT_ID, text=msg)
-    except:
-        await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
+    except Exception as e:
+        logging.warning(f"Erreur récupération citation: {e}, retry")
+        # retry simple
+        try:
+            r = requests.get("https://api.quotable.io/random", timeout=10, verify=False)
+            data = r.json()
+            content = data.get("content")
+            author = data.get("author")
+            if content:
+                msg = f"💡 Citation : {content} — {author if author else 'Inconnu'}"
+                await bot.send_message(chat_id=CHAT_ID, text=msg)
+            else:
+                await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
+        except:
+            await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
-    last_weather_ts = 0
-    last_news_ts = 0
-    last_quote_ts = 0
+    # 1ère exécution immédiate
+    await asyncio.gather(send_weather(), send_news(), send_quote())
 
     while True:
-        now = time.time()
-
-        # météo 30 min
-        if now - last_weather_ts >= 30*60:
-            await send_weather()
-            last_weather_ts = now
-
-        # news 10 min
-        if now - last_news_ts >= 10*60:
-            await send_news()
-            last_news_ts = now
-
-        # citation 20 min
-        if now - last_quote_ts >= 20*60:
-            await send_quote()
-            last_quote_ts = now
-
-        await asyncio.sleep(30)
+        await asyncio.gather(send_weather(), send_news(), send_quote())
+        await asyncio.sleep(30*60)  # toutes les 30 min
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
