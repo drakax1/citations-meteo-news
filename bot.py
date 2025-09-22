@@ -23,37 +23,36 @@ TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
 CHAT_ID = 7116219655
 OWM_API_KEY = "2754828f53424769b54b440f1253486e"
 NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
-
 CITIES = [
-    {"name": "Sierre", "zip": "3960"},
-    {"name": "Sion", "zip": "1950"},
-    {"name": "Martigny", "zip": "1920"},
-    {"name": "Monthey", "zip": "1870"},
+    {"name": "Sierre", "code": "3960"},
+    {"name": "Sion", "code": "1950"},
+    {"name": "Martigny", "code": "1920"},
+    {"name": "Monthey", "code": "1870"},
 ]
 
 bot = Bot(token=TOKEN)
 nest_asyncio.apply()  # permet asyncio dans Render
 
 # ===================== MÉTÉO =====================
-def get_weather_for_city(city_name):
+def get_weather_for_city(city):
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={OWM_API_KEY}&units=metric&lang=fr"
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city['name']}&appid={OWM_API_KEY}&units=metric&lang=fr"
         r = requests.get(url, timeout=10).json()
-        main_weather = r['weather'][0]['main']
-        description = r['weather'][0]['description']
+        desc = r['weather'][0]['description']  # petite phrase en français
         temp = r['main']['temp']
-        feels_like = r['main'].get('feels_like', temp)
-        humidity = r['main'].get('humidity', 'N/A')
-        wind = r.get('wind', {}).get('speed', 'N/A')
-
-        return f"{city_name} : {main_weather} ({description})\nTempérature : {temp}°C (ressentie {feels_like}°C)\nHumidité : {humidity}% | Vent : {wind} m/s"
+        feels_like = r['main']['feels_like']
+        humidity = r['main']['humidity']
+        wind = r['wind']['speed']
+        return f"{city['name']} : {desc}\nTempérature : {temp:.2f}°C (ressentie {feels_like:.2f}°C)\nHumidité : {humidity}% | Vent : {wind:.2f} m/s"
     except:
-        return f"{city_name} : erreur récupération météo"
+        return f"{city['name']} : Erreur récupération météo"
 
 async def send_weather():
-    msgs = [get_weather_for_city(city["name"]) for city in CITIES]
-    full_msg = "\n\n".join(msgs)
-    await bot.send_message(chat_id=CHAT_ID, text=full_msg)
+    messages = []
+    for city in CITIES:
+        messages.append(get_weather_for_city(city))
+    msg = "\n\n".join(messages)
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== NEWS =====================
 SEEN_NEWS_FILE = "seen_urls.json"
