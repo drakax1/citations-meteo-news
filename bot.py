@@ -10,7 +10,7 @@ import json
 import time
 import urllib3
 import nest_asyncio
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -28,7 +28,6 @@ CITY = "Sion"
 
 bot = Bot(token=TOKEN)
 nest_asyncio.apply()  # permet asyncio dans Render
-translator = Translator()
 
 # ===================== MÉTÉO =====================
 def get_weather():
@@ -122,7 +121,8 @@ async def send_quote():
     author = data.get("author", "Inconnu")
 
     if original:
-        traduction = translator.translate(original, src='en', dest='fr').text
+        # Traduction avec deep-translator
+        traduction = GoogleTranslator(source='en', target='fr').translate(original)
         msg = f"💡 Citation originale :
 {original}
 
