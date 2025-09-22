@@ -73,9 +73,9 @@ def send_quote():
     bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== PLANIFICATION =====================
-schedule.every().hour.at(":00").do(send_weather)
-schedule.every().hour.at(":05").do(send_news)
-schedule.every().hour.at(":10").do(send_quote)
+schedule.every().hour.at(":00").do(send_quote)    # Citations
+schedule.every().hour.at(":05").do(send_weather)  # Météo
+schedule.every().hour.at(":10").do(send_news)     # News
 
 # ===================== KEEP ALIVE POUR RENDER =====================
 app = Flask('')
