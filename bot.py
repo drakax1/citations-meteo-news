@@ -121,13 +121,12 @@ async def send_quote():
     author = data.get("author", "Inconnu")
 
     if original:
-        # Traduction avec deep-translator
         traduction = GoogleTranslator(source='en', target='fr').translate(original)
-        msg = f"💡 Citation originale :
+        msg = f"""💡 Citation originale :
 {original}
 
 🇫🇷 Traduction :
-{traduction} — {author}"
+{traduction} — {author}"""
         await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== SCHEDULER =====================
