@@ -124,7 +124,6 @@ async def send_quote():
         await bot.send_message(chat_id=CHAT_ID, text=msg)
     except Exception as e:
         logging.warning(f"Erreur récupération citation: {e}, retry")
-        # retry simple
         try:
             r = requests.get("https://api.quotable.io/random", timeout=10, verify=False)
             data = r.json()
@@ -140,9 +139,7 @@ async def send_quote():
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
-    # Exécution immédiate au démarrage
-    await asyncio.gather(send_weather(), send_news(), send_quote())
-
+    # Boucle unique, première exécution immédiate
     while True:
         await asyncio.gather(send_weather(), send_news(), send_quote())
         await asyncio.sleep(30*60)  # toutes les 30 min
