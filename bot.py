@@ -6,7 +6,8 @@ from telegram import Bot
 from flask import Flask
 from threading import Thread
 import logging
-from datetime import datetime, timedelta
+import json
+import time
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -45,55 +46,105 @@ async def send_weather():
             pass
 
 # ===================== NEWS =====================
-last_news_ids = set()
-news_reset_time = datetime.utcnow() + timedelta(hours=24)
+SEEN_FILE = "seen_urls.json"
+RESET_INTERVAL = 24 * 3600  # reset toutes les 24h
+
+def load_seen():
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            data = json.load(f)
+            if time.time() - data.get("ts", 0) > RESET_INTERVAL:
+                return set()
+            return set(data.get("urls", []))
+    return set()
+
+def save_seen(seen):
+    with open(SEEN_FILE, "w") as f:
+        json.dump({"ts": time.time(), "urls": list(seen)}, f)
 
 async def send_news():
-    global last_news_ids, news_reset_time
     try:
-        # Reset des news toutes les 24h pour ne pas saturer
-        if datetime.utcnow() >= news_reset_time:
-            last_news_ids = set()
-            news_reset_time = datetime.utcnow() + timedelta(hours=24)
+        seen = load_seen()
+        new_articles = []
 
-        # News "everything" pour maximiser la probabilité d'avoir au moins un article
-        url = f"https://newsapi.org/v2/everything?q=bitcoin&pageSize=10&apiKey={NEWS_API_KEY}"
-        r = requests.get(url, timeout=10).json()
-        articles = r.get("articles", [])
-        new_articles = [a for a in articles if a['title'] not in last_news_ids]
+        # FR toutes catégories
+        url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=5&apiKey={NEWS_API_KEY}"
+        new_articles.extend(requests.get(url_fr, timeout=10).json().get("articles", []))
 
-        if not new_articles:
-            msg = "📰 Pas de nouvelles disponibles"
-        else:
-            last_news_ids.update([a['title'] for a in new_articles])
-            titles = [a['title'] for a in new_articles]
-            msg = "📰 Dernières actus :\n" + "\n".join(titles)
+        # EN : health, science, technology
+        for cat in ["health", "science", "technology"]:
+            url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=3&apiKey={NEWS_API_KEY}"
+            new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
 
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
-        logging.info(f"News envoyée: {msg}")
+        sent_count = 0
+        for art in new_articles:
+            url = art.get("url")
+            if not url or url in seen:
+                continue
+
+            seen.add(url)
+
+            title = art.get("title", "Sans titre")
+            desc = art.get("description", "")
+            link = url
+            img = art.get("urlToImage")
+
+            msg = f"📰 {title}\n{desc}\n{link}"
+
+            try:
+                if img:
+                    await bot.send_photo(chat_id=CHAT_ID, photo=img, caption=msg[:1000])
+                else:
+                    await bot.send_message(chat_id=CHAT_ID, text=msg[:4000])
+                sent_count += 1
+                await asyncio.sleep(2)
+            except Exception as e:
+                logging.error(f"Erreur envoi news: {e}")
+
+        save_seen(seen)
+
+        if sent_count == 0:
+            await bot.send_message(chat_id=CHAT_ID, text="📰 Pas de nouvelles inédites")
+
     except Exception as e:
-        await bot.send_message(chat_id=CHAT_ID, text=f"Erreur récupération news: {e}")
+        logging.error(f"Erreur récupération news: {e}")
+        await bot.send_message(chat_id=CHAT_ID, text="Erreur récupération news")
 
 # ===================== CITATIONS =====================
 async def send_quote():
     try:
-        r = requests.get("https://api.quotable.io/random", timeout=10)
+        r = requests.get("https://api.quotable.io/random", timeout=5)
         data = r.json()
         msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
         await bot.send_message(chat_id=CHAT_ID, text=msg)
-        logging.info(f"Citation envoyée: {msg}")
-    except Exception as e:
-        await bot.send_message(chat_id=CHAT_ID, text=f"💡 Pas de citation disponible: {e}")
+    except:
+        await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
 
-# ===================== SCHEDULER 30MIN =====================
+# ===================== SCHEDULER =====================
 async def scheduler_loop():
+    last_weather_ts = 0
+    last_news_ts = 0
+    last_quote_ts = 0
+
     while True:
-        await asyncio.gather(
-            send_weather(),
-            send_news(),
-            send_quote()
-        )
-        await asyncio.sleep(30*60)  # 30 minutes
+        now = time.time()
+
+        # météo 30 min
+        if now - last_weather_ts >= 30*60:
+            await send_weather()
+            last_weather_ts = now
+
+        # news 10 min
+        if now - last_news_ts >= 10*60:
+            await send_news()
+            last_news_ts = now
+
+        # citation 20 min
+        if now - last_quote_ts >= 20*60:
+            await send_quote()
+            last_quote_ts = now
+
+        await asyncio.sleep(30)
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
@@ -109,7 +160,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# ===================== BOUCLE PRINCIPALE =====================
+# ===================== MAIN =====================
 if __name__ == "__main__":
     keep_alive()
     asyncio.run(scheduler_loop())
