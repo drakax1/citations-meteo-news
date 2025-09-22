@@ -9,12 +9,13 @@ import logging
 import json
 import time
 import urllib3
+import nest_asyncio
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Désactiver les warnings SSL pour quotable.io
+# Désactiver warnings SSL pour quotable.io
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ===================== CONFIG =====================
@@ -25,6 +26,7 @@ NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
 CITY = "Sion"
 
 bot = Bot(token=TOKEN)
+nest_asyncio.apply()  # permet asyncio dans Render
 
 # ===================== MÉTÉO =====================
 def get_weather():
@@ -138,7 +140,7 @@ async def send_quote():
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
-    # 1ère exécution immédiate
+    # Exécution immédiate au démarrage
     await asyncio.gather(send_weather(), send_news(), send_quote())
 
     while True:
@@ -151,15 +153,14 @@ app = Flask('')
 def home():
     return "Bot is alive"
 
-def run():
+def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    keep_alive()
-    asyncio.run(scheduler_loop())
+    # Flask en thread pour keep-alive
+    Thread(target=run_flask).start()
+    # Scheduler asyncio loop infinie
+    asyncio.get_event_loop().create_task(scheduler_loop())
+    asyncio.get_event_loop().run_forever()
