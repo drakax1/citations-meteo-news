@@ -2,11 +2,12 @@
 import os
 import asyncio
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Bot
 from flask import Flask
 from threading import Thread
 import logging
+import json
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -18,6 +19,7 @@ CHAT_ID = 7116219655
 OWM_API_KEY = "2754828f53424769b54b440f1253486e"
 NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
 CITY = "Sion"
+NEWS_FILE = "last_news.json"
 
 bot = Bot(token=TOKEN)
 
@@ -51,35 +53,51 @@ async def send_weather():
         logging.info("[DEBUG] Météo identique, pas de doublon envoyé")
 
 # ===================== NEWS =====================
-last_news_ids = set()
+def load_last_news():
+    if os.path.exists(NEWS_FILE):
+        with open(NEWS_FILE, "r") as f:
+            data = json.load(f)
+            ts = datetime.fromisoformat(data.get("timestamp"))
+            # reset si >24h
+            if datetime.utcnow() - ts > timedelta(hours=24):
+                return set()
+            return set(data.get("titles", []))
+    return set()
 
-def get_news():
-    global last_news_ids
+def save_last_news(titles):
+    data = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "titles": list(titles)
+    }
+    with open(NEWS_FILE, "w") as f:
+        json.dump(data, f)
+
+async def send_news():
+    last_news_ids = load_last_news()
     try:
-        # Priorité: Suisse -> France -> Belgique -> Québec
         countries = ["ch","fr","be","ca"]
+        all_new_articles = []
         for country in countries:
             url = f"https://newsapi.org/v2/top-headlines?language=fr&country={country}&pageSize=10&apiKey={NEWS_API_KEY}"
             r = requests.get(url, timeout=10).json()
             articles = r.get("articles", [])
             new_articles = [a for a in articles if a['title'] not in last_news_ids]
             if new_articles:
-                last_news_ids.update([a['title'] for a in new_articles])
-                logging.info(f"[DEBUG] {len(new_articles)} nouvelles récupérées pour {country}")
-                return "📰 Dernières actus :\n" + "\n".join([a['title'] for a in new_articles])
-        logging.info("[DEBUG] Pas de nouvelles uniques à envoyer")
-        return "📰 Pas de nouvelles fraîches..."
-    except Exception as e:
-        logging.error(f"[ERROR] Erreur news: {e}")
-        return "Erreur récupération news"
-
-async def send_news():
-    msg = get_news()
-    try:
+                all_new_articles.extend(new_articles)
+                break  # Priorité pays, on prend le premier qui a du contenu
+        if not all_new_articles:
+            msg = "📰 Pas de nouvelles fraîches..."
+            logging.info("[DEBUG] News: aucune nouvelle unique")
+        else:
+            titles = [a['title'] for a in all_new_articles]
+            msg = "📰 Dernières actus :\n" + "\n".join(titles)
+            last_news_ids.update(titles)
+            save_last_news(last_news_ids)
+            logging.info(f"[DEBUG] {len(titles)} nouvelles envoyées")
         await bot.send_message(chat_id=CHAT_ID, text=msg)
-        logging.info("[DEBUG] News envoyées")
     except Exception as e:
         logging.error(f"[ERROR] Envoi news: {e}")
+        await bot.send_message(chat_id=CHAT_ID, text="Erreur récupération news")
 
 # ===================== CITATIONS =====================
 async def send_quote():
@@ -88,12 +106,19 @@ async def send_quote():
         if r.status_code == 200:
             data = r.json()
             msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
+            logging.info("[DEBUG] Citation récupérée")
+        else:
+            msg = "💡 Pas de citation disponible"
+            logging.error(f"[ERROR] Citation API status: {r.status_code}")
+    except Exception as e:
+        msg = "💡 Pas de citation disponible"
+        logging.error(f"[ERROR] Erreur récupération citation: {e}")
+    finally:
+        try:
             await bot.send_message(chat_id=CHAT_ID, text=msg)
             logging.info("[DEBUG] Citation envoyée")
-        else:
-            logging.error(f"[ERROR] API citation status: {r.status_code}")
-    except Exception as e:
-        logging.error(f"[ERROR] Erreur récupération citation: {e}")
+        except Exception as e:
+            logging.error(f"[ERROR] Envoi citation: {e}")
 
 # ===================== SCHEDULER 30MIN =====================
 async def scheduler_loop():
@@ -126,5 +151,4 @@ def keep_alive():
 # ===================== BOUCLE PRINCIPALE =====================
 if __name__ == "__main__":
     keep_alive()
-    # Assurer qu'on ne lance qu'une seule fois le scheduler
     asyncio.run(scheduler_loop())
