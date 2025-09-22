@@ -36,8 +36,9 @@ def get_weather():
         desc = r['weather'][0]['description']
         temp = r['main']['temp']
         return f"🌤️ Météo à {CITY} : {desc}, {temp}°C"
-    except:
-        return "Erreur récupération météo"
+    except Exception as e:
+        logging.error(f"Erreur récupération météo: {e}")
+        return "⚠️ Erreur récupération météo"
 
 async def send_weather():
     msg = get_weather()
@@ -109,37 +110,29 @@ async def send_news():
 
     except Exception as e:
         logging.error(f"Erreur récupération news: {e}")
-        await bot.send_message(chat_id=CHAT_ID, text="Erreur récupération news")
+        await bot.send_message(chat_id=CHAT_ID, text="⚠️ Erreur récupération news")
 
 # ===================== CITATIONS =====================
 async def send_quote():
-    try:
-        r = requests.get("https://api.quotable.io/random", timeout=10, verify=False)
-        data = r.json()
-        content = data.get("content")
-        author = data.get("author")
-        if not content:
-            raise Exception("Contenu vide")
-        msg = f"💡 Citation : {content} — {author if author else 'Inconnu'}"
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
-    except Exception as e:
-        logging.warning(f"Erreur récupération citation: {e}, retry")
+    for attempt in range(3):
         try:
-            r = requests.get("https://api.quotable.io/random", timeout=10, verify=False)
+            r = requests.get("https://api.quotable.io/random", timeout=20, verify=False)
             data = r.json()
             content = data.get("content")
-            author = data.get("author")
+            author = data.get("author", "Inconnu")
             if content:
-                msg = f"💡 Citation : {content} — {author if author else 'Inconnu'}"
+                msg = f"💡 Citation : {content} — {author}"
                 await bot.send_message(chat_id=CHAT_ID, text=msg)
-            else:
-                await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
-        except:
-            await bot.send_message(chat_id=CHAT_ID, text="💡 Pas de citation disponible")
+                return
+        except Exception as e:
+            logging.warning(f"Erreur citation (essai {attempt+1}/3) : {e}")
+            await asyncio.sleep(1)
+    # fallback si échec réseau/API
+    await bot.send_message(chat_id=CHAT_ID, text="⚠️ Erreur récupération citation (API inaccessible)")
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
-    # Boucle unique, première exécution immédiate
+    # Première exécution immédiate + boucle toutes les 30min
     while True:
         await asyncio.gather(send_weather(), send_news(), send_quote())
         await asyncio.sleep(30*60)  # toutes les 30 min
