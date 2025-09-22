@@ -1,151 +1,123 @@
 
+import os
+import asyncio
 import requests
-import schedule
-import time
-import json
-import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Bot
 from flask import Flask
 from threading import Thread
-import os
+import logging
 
-# ===================== CONFIGURATION EN DUR =====================
+# ===================== LOGGING =====================
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# ===================== CONFIG =====================
 TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
 CHAT_ID = 7116219655
 OWM_API_KEY = "2754828f53424769b54b440f1253486e"
 NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
-CITY = "Sion"
+CITY = "Sion"  # enlever ",CH" pour le message
 
 bot = Bot(token=TOKEN)
 
-# ===================== LOGGING =====================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
 # ===================== MÉTÉO =====================
+last_weather = None
+
 def get_weather():
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={OWM_API_KEY}&units=metric&lang=fr"
         r = requests.get(url).json()
         desc = r['weather'][0]['description']
         temp = r['main']['temp']
-        logging.info(f"Météo récupérée : {desc}, {temp}°C")
-        return f"🌤️ Météo à {CITY} : {desc}, {temp}°C"
-    except Exception as e:
-        logging.error(f"Erreur météo : {e}")
-        return None
-
-def get_alerts():
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/onecall?lat=46.233&lon=7.366&appid={OWM_API_KEY}&lang=fr"
-        r = requests.get(url).json()
-        if "alerts" in r:
-            alerts = [a['description'] for a in r['alerts']]
-            return "\n⚠️ ALERTE MÉTÉO :\n" + "\n".join(alerts)
-    except Exception as e:
-        logging.error(f"Erreur alertes météo : {e}")
-    return None
-
-def send_weather():
-    msg = get_weather()
-    if msg:
-        bot.send_message(chat_id=CHAT_ID, text=msg)
-    alert = get_alerts()
-    if alert:
-        bot.send_message(chat_id=CHAT_ID, text=alert)
-
-# ===================== NEWS =====================
-LAST_NEWS_FILE = "last_news.json"
-MAX_LAST_NEWS = 1000
-
-# Charger news déjà envoyées
-if os.path.exists(LAST_NEWS_FILE):
-    with open(LAST_NEWS_FILE, "r") as f:
-        last_news_ids = json.load(f)
-else:
-    last_news_ids = []
-
-COUNTRIES_PRIORITY = ["ch", "fr", "be", "ca"]
-
-def save_last_news():
-    if len(last_news_ids) > MAX_LAST_NEWS:
-        del last_news_ids[:-MAX_LAST_NEWS]
-    with open(LAST_NEWS_FILE, "w") as f:
-        json.dump(last_news_ids, f)
-
-def get_news():
-    try:
-        all_articles = []
-        for country in COUNTRIES_PRIORITY:
-            url = (
-                f"https://newsapi.org/v2/top-headlines?"
-                f"country={country}&"
-                f"language=fr&"
-                f"pageSize=10&"
-                f"apiKey={NEWS_API_KEY}"
-            )
-            r = requests.get(url).json()
-            articles = r.get("articles", [])
-            for a in articles:
-                if a['url'] not in last_news_ids:
-                    all_articles.append(a)
-        if not all_articles:
-            logging.info("Pas de nouvelles fraîches")
-            return None
-        # Trier par date et ne prendre que 5 max
-        all_articles = sorted(all_articles, key=lambda x: x['publishedAt'], reverse=True)[:5]
-        msg = "📰 Dernières actus :\n" + "\n".join([a['title'] for a in all_articles])
-        # Ajouter aux news déjà envoyées
-        for a in all_articles:
-            last_news_ids.append(a['url'])
-        save_last_news()
-        logging.info(f"{len(all_articles)} news envoyées")
+        msg = f"🌤️ Météo à {CITY} : {desc}, {temp}°C"
+        logging.info(f"Météo récupérée: {msg}")
         return msg
     except Exception as e:
-        logging.error(f"Erreur news : {e}")
-        return None
+        logging.error(f"Erreur météo: {e}")
+        return "Erreur récupération météo"
 
-def send_news():
+async def send_weather():
+    global last_weather
+    msg = get_weather()
+    if msg != last_weather:
+        try:
+            await bot.send_message(chat_id=CHAT_ID, text=f"[DEBUG] Envoi météo\n{msg}")
+            last_weather = msg
+            logging.info("Météo envoyée")
+        except Exception as e:
+            logging.error(f"Erreur envoi météo: {e}")
+    else:
+        logging.info("Météo identique, pas de doublon envoyé")
+
+# ===================== NEWS =====================
+last_news_ids = set()
+
+def get_news():
+    global last_news_ids
+    try:
+        # 🇨🇭 Suisse francophone prioritaire
+        countries = ["ch", "fr", "be", "ca"]
+        for country in countries:
+            url = f"https://newsapi.org/v2/top-headlines?language=fr&country={country}&pageSize=10&apiKey={NEWS_API_KEY}"
+            r = requests.get(url).json()
+            articles = r.get("articles", [])
+            new_articles = [a for a in articles if a['title'] not in last_news_ids]
+            if new_articles:
+                last_news_ids.update([a['title'] for a in new_articles])
+                logging.info(f"{len(new_articles)} nouvelles récupérées pour {country}")
+                return "📰 Dernières actus :\n" + "\n".join([a['title'] for a in new_articles])
+        logging.info("Aucune nouvelle unique à envoyer")
+        return "📰 Pas de nouvelles fraîches..."
+    except Exception as e:
+        logging.error(f"Erreur news: {e}")
+        return "Erreur récupération news"
+
+async def send_news():
     msg = get_news()
-    if msg:
-        bot.send_message(chat_id=CHAT_ID, text=msg)
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=f"[DEBUG] Envoi news\n{msg}")
+        logging.info("News envoyées")
+    except Exception as e:
+        logging.error(f"Erreur envoi news: {e}")
 
 # ===================== CITATIONS =====================
-def get_quote():
+async def send_quote():
     try:
         r = requests.get("https://api.quotable.io/random", timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        logging.info(f"Citation récupérée : {data['content']} — {data['author']}")
-        return f"💡 Citation : {data['content']} — {data['author']}"
+        if r.status_code == 200:
+            data = r.json()
+            msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
+            await bot.send_message(chat_id=CHAT_ID, text=f"[DEBUG] Envoi citation\n{msg}")
+            logging.info("Citation envoyée")
+        else:
+            logging.error(f"Erreur API citation status code: {r.status_code}")
     except Exception as e:
-        logging.error(f"Erreur citation : {e}")
-        return None
+        logging.error(f"Erreur récupération citation: {e}")
 
-def send_quote():
-    msg = get_quote()
-    if msg:
-        bot.send_message(chat_id=CHAT_ID, text=msg)
+# ===================== SCHEDULER 30MIN =====================
+async def scheduler_loop():
+    while True:
+        logging.info("Scheduler tick")
+        await asyncio.gather(
+            send_weather(),
+            send_news(),
+            send_quote()
+        )
+        logging.info("Attente 30 minutes")
+        await asyncio.sleep(30*60)  # 30 minutes
 
-# ===================== PLANIFICATION =====================
-schedule.every(30).minutes.do(send_weather)
-schedule.every(30).minutes.do(send_news)
-schedule.every(30).minutes.do(send_quote)
-
-# ===================== KEEP ALIVE POUR RENDER =====================
-app = Flask('bot')
-
+# ===================== KEEP ALIVE =====================
+app = Flask('')
 @app.route('/')
 def home():
     logging.info("Ping reçu sur /")
     return "Bot is alive"
 
 def run():
-    logging.info("Flask server started")
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    logging.info(f"Flask server started on port {port}")
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
@@ -154,7 +126,4 @@ def keep_alive():
 # ===================== BOUCLE PRINCIPALE =====================
 if __name__ == "__main__":
     keep_alive()
-    logging.info("Bot démarré et prêt")
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+    asyncio.run(scheduler_loop())
