@@ -36,13 +36,11 @@ def get_weather():
         desc = r['weather'][0]['description']
         temp = r['main']['temp']
         return f"Météo à {CITY} : {desc}, {temp}°C"
-    except Exception as e:
-        logging.error(f"Erreur récupération météo: {e}")
+    except:
         return "Erreur récupération météo"
 
 async def send_weather():
     msg = get_weather()
-    logging.info(f"Envoi météo: {msg}")
     await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== NEWS =====================
@@ -75,7 +73,6 @@ async def send_news():
         url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
         new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
 
-    sent_count = 0
     for art in new_articles:
         url = art.get("url")
         if not url or url in seen:
@@ -95,14 +92,11 @@ async def send_news():
                 await bot.send_photo(chat_id=CHAT_ID, photo=img, caption=msg[:1000])
             else:
                 await bot.send_message(chat_id=CHAT_ID, text=msg[:4000])
-            sent_count += 1
             await asyncio.sleep(1)
-        except Exception as e:
-            logging.error(f"Erreur envoi news: {e}")
+        except:
             continue
 
     save_seen_news(seen)
-    logging.info(f"Nombre d'articles envoyés: {sent_count}")
 
 # ===================== CITATIONS =====================
 SEEN_QUOTES_FILE = "seen_quotes.json"
@@ -121,37 +115,34 @@ def save_seen_quotes(seen):
 async def send_quote():
     seen = load_seen_quotes()
     for _ in range(5):  # max 5 essais pour trouver une citation non vue
-        try:
-            r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
-            data = r.json()
-            cid = data.get("_id")
-            if cid in seen:
-                continue
-
-            original = data.get("content")
-            author = data.get("author", "Inconnu")
-            traduction = GoogleTranslator(source='en', target='fr').translate(original)
-
-            msg = f"Citation originale:\n{original}\n\nTraduction française:\n{traduction} — {author}"
-
-            await bot.send_message(chat_id=CHAT_ID, text=msg)
-            logging.info(f"Citation envoyée: {original}")
-            seen.add(cid)
-            save_seen_quotes(seen)
-            return
-        except Exception as e:
-            logging.error(f"Erreur récupération citation: {e}")
+        r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
+        data = r.json()
+        cid = data.get("_id")
+        if cid in seen:
             continue
+
+        original = data.get("content")
+        author = data.get("author", "Inconnu")
+        traduction = GoogleTranslator(source='en', target='fr').translate(original)
+
+        msg = f"Citation originale :\n{original}\n\nTraduction française :\n{traduction} — {author}"
+
+        await bot.send_message(chat_id=CHAT_ID, text=msg)
+        seen.add(cid)
+        save_seen_quotes(seen)
+        return
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
     while True:
-        logging.info("=== Scheduler tick ===")
         try:
-            await asyncio.gather(send_quote(), send_weather(), send_news())
+            # Exécution séquentielle pour éviter conflits
+            await send_quote()
+            await send_weather()
+            await send_news()
         except Exception as e:
             logging.error(f"Erreur dans scheduler_loop: {e}")
-        await asyncio.sleep(5*60)  # toutes les 5 min pour test
+        await asyncio.sleep(5*60)  # intervalle 5 minutes pour test
 
 # ===================== KEEP ALIVE =====================
 app = Flask('')
@@ -166,7 +157,5 @@ def run_flask():
 # ===================== MAIN =====================
 if __name__ == "__main__":
     Thread(target=run_flask).start()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(scheduler_loop())
-    loop.run_forever()
+    asyncio.get_event_loop().create_task(scheduler_loop())
+    asyncio.get_event_loop().run_forever()
