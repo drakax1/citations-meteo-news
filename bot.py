@@ -114,21 +114,37 @@ async def send_news():
 
 # ===================== CITATIONS =====================
 async def send_quote():
-    for attempt in range(3):
+    for attempt in range(1, 4):  # 3 essais
         try:
-            r = requests.get("https://api.quotable.io/random", timeout=20, verify=False)
+            logging.info(f"Essai {attempt} récupération citation...")
+            r = requests.get("https://api.quotable.io/random", timeout=15)
+            logging.info(f"Status code API quotable: {r.status_code}")
+            
+            # Vérifier si la réponse est OK
+            if r.status_code != 200:
+                raise Exception(f"HTTP {r.status_code}")
+            
             data = r.json()
             content = data.get("content")
             author = data.get("author", "Inconnu")
+            
             if content:
                 msg = f"💡 Citation : {content} — {author}"
                 await bot.send_message(chat_id=CHAT_ID, text=msg)
+                logging.info("Citation envoyée avec succès")
                 return
+            else:
+                logging.warning(f"Réponse API vide ou invalide (essai {attempt})")
+                await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Pas de contenu reçu (essai {attempt})")
+                
         except Exception as e:
-            logging.warning(f"Erreur citation (essai {attempt+1}/3) : {e}")
-            await asyncio.sleep(1)
-    # fallback si échec réseau/API
-    await bot.send_message(chat_id=CHAT_ID, text="⚠️ Erreur récupération citation (API inaccessible)")
+            logging.error(f"Erreur récupération citation (essai {attempt}): {e}")
+            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur citation (essai {attempt}): {e}")
+            await asyncio.sleep(2)  # pause avant le prochain essai
+
+    # Fallback si tous les essais échouent
+    await bot.send_message(chat_id=CHAT_ID, text="⚠️ Erreur récupération citation (API inaccessible après 3 essais)")
+    logging.error("Échec récupération citation après 3 essais")
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
