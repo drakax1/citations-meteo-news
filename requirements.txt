@@ -2,3 +2,4 @@ python-telegram-bot==20.4
 requests
 flask
 nest-asyncio
+googletrans==4.0.0-rc1

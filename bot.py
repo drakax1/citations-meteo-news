@@ -10,6 +10,7 @@ import json
 import time
 import urllib3
 import nest_asyncio
+from googletrans import Translator
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -27,6 +28,7 @@ CITY = "Sion"
 
 bot = Bot(token=TOKEN)
 nest_asyncio.apply()  # permet asyncio dans Render
+translator = Translator()
 
 # ===================== MÉTÉO =====================
 def get_weather():
@@ -114,41 +116,22 @@ async def send_news():
 
 # ===================== CITATIONS =====================
 async def send_quote():
-    for attempt in range(1, 4):  # 3 essais
-        try:
-            logging.info(f"Essai {attempt} récupération citation...")
-            r = requests.get("https://api.quotable.io/random", timeout=15)
-            logging.info(f"Status code API quotable: {r.status_code}")
-            
-            # Vérifier si la réponse est OK
-            if r.status_code != 200:
-                raise Exception(f"HTTP {r.status_code}")
-            
-            data = r.json()
-            content = data.get("content")
-            author = data.get("author", "Inconnu")
-            
-            if content:
-                msg = f"💡 Citation : {content} — {author}"
-                await bot.send_message(chat_id=CHAT_ID, text=msg)
-                logging.info("Citation envoyée avec succès")
-                return
-            else:
-                logging.warning(f"Réponse API vide ou invalide (essai {attempt})")
-                await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Pas de contenu reçu (essai {attempt})")
-                
-        except Exception as e:
-            logging.error(f"Erreur récupération citation (essai {attempt}): {e}")
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur citation (essai {attempt}): {e}")
-            await asyncio.sleep(2)  # pause avant le prochain essai
+    r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
+    data = r.json()
+    original = data.get("content")
+    author = data.get("author", "Inconnu")
 
-    # Fallback si tous les essais échouent
-    await bot.send_message(chat_id=CHAT_ID, text="⚠️ Erreur récupération citation (API inaccessible après 3 essais)")
-    logging.error("Échec récupération citation après 3 essais")
+    if original:
+        traduction = translator.translate(original, src='en', dest='fr').text
+        msg = f"💡 Citation originale :
+{original}
+
+🇫🇷 Traduction :
+{traduction} — {author}"
+        await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
-    # Première exécution immédiate + boucle toutes les 30min
     while True:
         await asyncio.gather(send_weather(), send_news(), send_quote())
         await asyncio.sleep(30*60)  # toutes les 30 min
@@ -165,8 +148,6 @@ def run_flask():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Flask en thread pour keep-alive
     Thread(target=run_flask).start()
-    # Scheduler asyncio loop infinie
     asyncio.get_event_loop().create_task(scheduler_loop())
     asyncio.get_event_loop().run_forever()
