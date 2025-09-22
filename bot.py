@@ -75,21 +75,16 @@ def save_last_news(titles):
 async def send_news():
     last_news_ids = load_last_news()
     try:
-        countries = ["ch","fr","be","ca"]
-        all_new_articles = []
-        for country in countries:
-            url = f"https://newsapi.org/v2/top-headlines?language=fr&country={country}&pageSize=10&apiKey={NEWS_API_KEY}"
-            r = requests.get(url, timeout=10).json()
-            articles = r.get("articles", [])
-            new_articles = [a for a in articles if a['title'] not in last_news_ids]
-            if new_articles:
-                all_new_articles.extend(new_articles)
-                break  # Priorité pays, on prend le premier qui a du contenu
-        if not all_new_articles:
+        # NEWS simplifiée : top 10 francophones
+        url = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=10&apiKey={NEWS_API_KEY}"
+        r = requests.get(url, timeout=10).json()
+        articles = r.get("articles", [])
+        new_articles = [a for a in articles if a['title'] not in last_news_ids]
+        if not new_articles:
             msg = "📰 Pas de nouvelles fraîches..."
             logging.info("[DEBUG] News: aucune nouvelle unique")
         else:
-            titles = [a['title'] for a in all_new_articles]
+            titles = [a['title'] for a in new_articles]
             msg = "📰 Dernières actus :\n" + "\n".join(titles)
             last_news_ids.update(titles)
             save_last_news(last_news_ids)
@@ -102,7 +97,7 @@ async def send_news():
 # ===================== CITATIONS =====================
 async def send_quote():
     try:
-        r = requests.get("https://api.quotable.io/random", timeout=10)
+        r = requests.get("https://api.quotable.io/random", timeout=5)
         if r.status_code == 200:
             data = r.json()
             msg = f"💡 Citation : {data.get('content','')} — {data.get('author','')}"
