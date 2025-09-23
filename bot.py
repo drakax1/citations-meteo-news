@@ -9,6 +9,8 @@ import time
 import urllib3
 import nest_asyncio
 from deep_translator import GoogleTranslator
+from fastapi import FastAPI
+import uvicorn
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -30,12 +32,12 @@ CITIES = [
 ]
 
 bot = Bot(token=TOKEN)
+app = FastAPI()
 
-# ===================== RESET FICHIERS =====================
-for f in ["seen_urls.json", "seen_quotes.json"]:
-    if os.path.exists(f):
-        os.remove(f)
-        logging.info(f"Fichier {f} supprimé pour reset complet")
+# ===================== ENDPOINT PING =====================
+@app.get("/ping")
+async def ping():
+    return {"status": "ok", "message": "pong"}
 
 # ===================== MÉTÉO =====================
 def get_weather_for_city(city):
@@ -47,9 +49,9 @@ def get_weather_for_city(city):
         feels_like = r['main']['feels_like']
         humidity = r['main']['humidity']
         wind = r['wind']['speed']
-        return f"{city['name']} : {desc}\nTempérature : {temp:.2f}°C (ressentie {feels_like:.2f}°C)\nHumidité : {humidity}% | Vent : {wind:.2f} m/s"
+        return f"{city['name']} : {desc}\nTempérature : {temp:.1f}°C (ressentie {feels_like:.1f}°C)\nHumidité : {humidity}% | Vent : {wind:.1f} m/s"
     except Exception as e:
-        logging.error(f"Erreur récupération météo pour {city['name']}: {e}")
+        logging.error(f"Erreur météo pour {city['name']}: {e}")
         return f"{city['name']} : Erreur récupération météo"
 
 async def send_weather():
@@ -77,49 +79,42 @@ async def send_news():
     seen = load_seen_news()
     new_articles = []
 
+    # Récupération des articles français
     try:
-        resp = requests.get(f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}", timeout=10)
-        data = resp.json()
-        if data.get("status") != "ok":
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur NewsAPI FR: {data}")
-            logging.error(f"Erreur NewsAPI FR: {data}")
+        resp_fr = requests.get(f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}", timeout=10).json()
+        if resp_fr.get("status") == "ok":
+            new_articles.extend(resp_fr.get("articles", []))
         else:
-            new_articles.extend(data.get("articles", []))
+            logging.error(f"Erreur NewsAPI FR: {resp_fr}")
+            await bot.send_message(chat_id=CHAT_ID, text=f"Erreur NewsAPI FR: {resp_fr.get('message','?')}")
     except Exception as e:
-        await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Exception NewsAPI FR: {e}")
         logging.error(f"Exception NewsAPI FR: {e}")
+        await bot.send_message(chat_id=CHAT_ID, text=f"Exception NewsAPI FR: {e}")
 
+    # Récupération des articles EN
     for cat in ["health", "science", "technology"]:
         try:
-            resp = requests.get(f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}", timeout=10)
-            data = resp.json()
-            if data.get("status") != "ok":
-                await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur NewsAPI EN ({cat}): {data}")
-                logging.error(f"Erreur NewsAPI EN ({cat}): {data}")
+            resp_en = requests.get(f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}", timeout=10).json()
+            if resp_en.get("status") == "ok":
+                new_articles.extend(resp_en.get("articles", []))
             else:
-                new_articles.extend(data.get("articles", []))
+                logging.error(f"Erreur NewsAPI EN ({cat}): {resp_en}")
+                await bot.send_message(chat_id=CHAT_ID, text=f"Erreur NewsAPI EN ({cat}): {resp_en.get('message','?')}")
         except Exception as e:
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Exception NewsAPI EN ({cat}): {e}")
             logging.error(f"Exception NewsAPI EN ({cat}): {e}")
+            await bot.send_message(chat_id=CHAT_ID, text=f"Exception NewsAPI EN ({cat}): {e}")
 
-    if not new_articles:
-        await bot.send_message(chat_id=CHAT_ID, text="⚠️ Pas d'articles récupérés cette fois.")
-        logging.info("Pas d'articles récupérés cette fois.")
-        return
-
+    # Envoi des articles
     news_sent = False
     for art in new_articles:
         url = art.get("url")
         if not url or url in seen:
             continue
         seen.add(url)
-
         title = art.get("title", "Sans titre")
         desc = art.get("description", "")
-        link = url
         img = art.get("urlToImage")
-        msg = f"{title}\n{desc}\n{link}"
-
+        msg = f"{title}\n{desc}\n{url}"
         try:
             if img:
                 await bot.send_photo(chat_id=CHAT_ID, photo=img, caption=msg[:1000])
@@ -128,13 +123,10 @@ async def send_news():
             news_sent = True
             await asyncio.sleep(1)
         except Exception as e:
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur envoi article: {e}")
             logging.error(f"Erreur envoi article: {e}")
-            continue
 
     if not news_sent:
         await bot.send_message(chat_id=CHAT_ID, text="Pas de nouvelles fraîches.")
-        logging.info("Aucun article envoyé après filtrage des doublons.")
 
     save_seen_news(seen)
 
@@ -170,27 +162,31 @@ async def send_quote():
             save_seen_quotes(seen)
             return
         except Exception as e:
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur récupération ou traduction citation: {e}")
-            logging.error(f"Erreur citation: {e}")
-            continue
+            logging.error(f"Erreur récupération citation: {e}")
 
 # ===================== SCHEDULER =====================
 async def scheduler_loop():
+    # 1x au déploiement
+    await send_quote()
+    await send_weather()
+    await send_news()
+
     while True:
         try:
             await send_quote()
             await send_weather()
             await send_news()
         except Exception as e:
-            await bot.send_message(chat_id=CHAT_ID, text=f"⚠️ Erreur scheduler: {e}")
             logging.error(f"Erreur scheduler: {e}")
-        await asyncio.sleep(5*60)
+        await asyncio.sleep(30*60)  # 30 minutes
 
 # ===================== MAIN =====================
 async def main():
     asyncio.create_task(scheduler_loop())
-    while True:
-        await asyncio.sleep(3600)
+    # FastAPI en parallèle
+    config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == "__main__":
     asyncio.run(main())
