@@ -3,5 +3,3 @@ requests
 aiohttp
 nest-asyncio
 deep-translator
-fastapi
-uvicorn
