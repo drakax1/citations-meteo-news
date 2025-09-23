@@ -9,8 +9,8 @@ import time
 import urllib3
 import nest_asyncio
 from deep_translator import GoogleTranslator
-import aiohttp
-from aiohttp import web
+from fastapi import FastAPI
+import uvicorn
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -32,6 +32,12 @@ CITIES = [
 ]
 
 bot = Bot(token=TOKEN)
+app = FastAPI()
+
+# ===================== ENDPOINT PING =====================
+@app.get("/ping")
+async def ping():
+    return {"status": "ok", "message": "pong"}
 
 # ===================== MÉTÉO =====================
 def get_weather_for_city(city):
@@ -142,7 +148,7 @@ async def send_quote():
 async def scheduler_loop():
     while True:
         try:
-            # Ordre séquentiel pour respecter : Citation -> Météo -> News
+            # Ordre séquentiel : Citation -> Météo -> News
             await send_quote()
             await send_weather()
             await send_news()
@@ -150,27 +156,13 @@ async def scheduler_loop():
             logging.error(f"Erreur scheduler: {e}")
         await asyncio.sleep(5*60)
 
-# ===================== KEEP ALIVE / HTTP SERVER =====================
-PORT = int(os.environ.get("PORT", 10000))
-
-async def handle(request):
-    return web.Response(text="OK")
-
-app = web.Application()
-app.router.add_get("/", handle)
-
-async def run_server():
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
-
 # ===================== MAIN =====================
 async def main():
-    asyncio.create_task(run_server())       # Serveur HTTP pour Render
-    asyncio.create_task(scheduler_loop())   # Bot loop
-    while True:
-        await asyncio.sleep(3600)
+    asyncio.create_task(scheduler_loop())
+    # On laisse FastAPI tourner en parallèle
+    config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == "__main__":
     asyncio.run(main())
