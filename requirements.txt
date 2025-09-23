@@ -1,5 +1,5 @@
 python-telegram-bot==20.4
 requests
-flask
+aiohttp
 nest-asyncio
 deep-translator

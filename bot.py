@@ -3,20 +3,20 @@ import os
 import asyncio
 import requests
 from telegram import Bot
-from flask import Flask
-from threading import Thread
 import logging
 import json
 import time
 import urllib3
 import nest_asyncio
 from deep_translator import GoogleTranslator
+from aiohttp import web
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+nest_asyncio.apply()  # permet asyncio partout
 
 # ===================== CONFIG =====================
 TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
@@ -31,14 +31,13 @@ CITIES = [
 ]
 
 bot = Bot(token=TOKEN)
-nest_asyncio.apply()  # permet asyncio dans Render
 
 # ===================== MÉTÉO =====================
 def get_weather_for_city(city):
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city['name']}&appid={OWM_API_KEY}&units=metric&lang=fr"
         r = requests.get(url, timeout=10).json()
-        desc = r['weather'][0]['description']  # petite phrase en français
+        desc = r['weather'][0]['description']
         temp = r['main']['temp']
         feels_like = r['main']['feels_like']
         humidity = r['main']['humidity']
@@ -56,7 +55,7 @@ async def send_weather():
 
 # ===================== NEWS =====================
 SEEN_NEWS_FILE = "seen_urls.json"
-RESET_INTERVAL = 24 * 3600  # reset toutes les 24h
+RESET_INTERVAL = 24 * 3600
 
 def load_seen_news():
     if os.path.exists(SEEN_NEWS_FILE):
@@ -75,11 +74,9 @@ async def send_news():
     seen = load_seen_news()
     new_articles = []
 
-    # FR toutes catégories
     url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}"
     new_articles.extend(requests.get(url_fr, timeout=10).json().get("articles", []))
 
-    # EN catégories health, science, technology
     for cat in ["health", "science", "technology"]:
         url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
         new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
@@ -125,7 +122,7 @@ def save_seen_quotes(seen):
 
 async def send_quote():
     seen = load_seen_quotes()
-    for _ in range(5):  # max 5 essais pour trouver une citation non vue
+    for _ in range(5):
         r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
         data = r.json()
         cid = data.get("_id")
@@ -150,20 +147,30 @@ async def scheduler_loop():
             await asyncio.gather(send_quote(), send_weather(), send_news())
         except Exception as e:
             logging.error(f"Erreur dans scheduler_loop: {e}")
-        await asyncio.sleep(15*60)  # toutes les 15 min
+        await asyncio.sleep(5*60)
 
 # ===================== KEEP ALIVE =====================
-app = Flask('')
-@app.route('/')
-def home():
-    return "Bot is alive"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+async def handle(request):
+    return web.Response(text="Bot is alive")
 
 # ===================== MAIN =====================
+async def main():
+    # Lancer le scheduler
+    asyncio.create_task(scheduler_loop())
+
+    # Lancer le serveur web aiohttp
+    app = web.Application()
+    app.add_routes([web.get('/', handle)])
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Server started on port {port}")
+
+    # Boucle infinie pour ne pas quitter
+    while True:
+        await asyncio.sleep(3600)
+
 if __name__ == "__main__":
-    Thread(target=run_flask).start()
-    asyncio.get_event_loop().create_task(scheduler_loop())
-    asyncio.get_event_loop().run_forever()
+    asyncio.run(main())
