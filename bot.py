@@ -10,6 +10,7 @@ import urllib3
 import nest_asyncio
 from deep_translator import GoogleTranslator
 import aiohttp
+from aiohttp import web
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
@@ -149,20 +150,25 @@ async def scheduler_loop():
             logging.error(f"Erreur scheduler: {e}")
         await asyncio.sleep(5*60)
 
-# ===================== KEEP ALIVE / AUTOPING =====================
-async def keep_awake():
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                await session.get("https://citations-meteo-news.onrender.com/")
-        except:
-            pass
-        await asyncio.sleep(300)  # toutes les 5 minutes
+# ===================== KEEP ALIVE / HTTP SERVER =====================
+PORT = int(os.environ.get("PORT", 10000))
+
+async def handle(request):
+    return web.Response(text="OK")
+
+app = web.Application()
+app.router.add_get("/", handle)
+
+async def run_server():
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
 
 # ===================== MAIN =====================
 async def main():
-    asyncio.create_task(scheduler_loop())
-    asyncio.create_task(keep_awake())
+    asyncio.create_task(run_server())       # Serveur HTTP pour Render
+    asyncio.create_task(scheduler_loop())   # Bot loop
     while True:
         await asyncio.sleep(3600)
 
