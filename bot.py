@@ -49,7 +49,8 @@ def get_weather_for_city(city):
 async def send_weather():
     messages = []
     for city in CITIES:
-        messages.append(get_weather_for_city(city))
+        weather = await asyncio.to_thread(get_weather_for_city, city)
+        messages.append(weather)
     msg = "\n\n".join(messages)
     await bot.send_message(chat_id=CHAT_ID, text=msg)
 
@@ -74,12 +75,14 @@ async def send_news():
     seen = load_seen_news()
     new_articles = []
 
-    url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}"
-    new_articles.extend(requests.get(url_fr, timeout=10).json().get("articles", []))
+    # FR toutes catégories
+    fr_data = await asyncio.to_thread(requests.get, f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}", timeout=10)
+    new_articles.extend(fr_data.json().get("articles", []))
 
+    # EN catégories health, science, technology
     for cat in ["health", "science", "technology"]:
-        url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
-        new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
+        en_data = await asyncio.to_thread(requests.get, f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}", timeout=10)
+        new_articles.extend(en_data.json().get("articles", []))
 
     for art in new_articles:
         url = art.get("url")
@@ -123,7 +126,7 @@ def save_seen_quotes(seen):
 async def send_quote():
     seen = load_seen_quotes()
     for _ in range(5):
-        r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
+        r = await asyncio.to_thread(requests.get, "https://api.quotable.io/random", timeout=15, verify=False)
         data = r.json()
         cid = data.get("_id")
         if cid in seen:
@@ -131,7 +134,7 @@ async def send_quote():
 
         original = data.get("content")
         author = data.get("author", "Inconnu")
-        traduction = GoogleTranslator(source='en', target='fr').translate(original)
+        traduction = await asyncio.to_thread(GoogleTranslator(source='en', target='fr').translate, original)
 
         msg = f"Citation originale :\n{original}\n\nTraduction française :\n{traduction} — {author}"
 
