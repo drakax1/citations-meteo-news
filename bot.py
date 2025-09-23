@@ -78,6 +78,7 @@ async def send_news():
         url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
         new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
 
+    news_sent = False
     for art in new_articles:
         url = art.get("url")
         if not url or url in seen:
@@ -95,9 +96,13 @@ async def send_news():
                 await bot.send_photo(chat_id=CHAT_ID, photo=img, caption=msg[:1000])
             else:
                 await bot.send_message(chat_id=CHAT_ID, text=msg[:4000])
+            news_sent = True
             await asyncio.sleep(1)
         except:
             continue
+
+    if not news_sent:
+        await bot.send_message(chat_id=CHAT_ID, text="Pas de nouvelles fraîches.")
 
     save_seen_news(seen)
 
@@ -136,7 +141,10 @@ async def send_quote():
 async def scheduler_loop():
     while True:
         try:
-            await asyncio.gather(send_quote(), send_weather(), send_news())
+            # Ordre séquentiel pour respecter : Citation -> Météo -> News
+            await send_quote()
+            await send_weather()
+            await send_news()
         except Exception as e:
             logging.error(f"Erreur scheduler: {e}")
         await asyncio.sleep(5*60)
