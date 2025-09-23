@@ -9,14 +9,14 @@ import time
 import urllib3
 import nest_asyncio
 from deep_translator import GoogleTranslator
-from aiohttp import web
+import aiohttp
 
 # ===================== LOGGING =====================
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-nest_asyncio.apply()  # permet asyncio partout
+nest_asyncio.apply()
 
 # ===================== CONFIG =====================
 TOKEN = "8076882358:AAH1inJqY_tJfWOj-7psO3IOqN_X4plI1fE"
@@ -24,10 +24,10 @@ CHAT_ID = 7116219655
 OWM_API_KEY = "2754828f53424769b54b440f1253486e"
 NEWS_API_KEY = "57e9a76a7efa4e238fc9af6a330f790e"
 CITIES = [
-    {"name": "Sierre", "code": "3960"},
-    {"name": "Sion", "code": "1950"},
-    {"name": "Martigny", "code": "1920"},
-    {"name": "Monthey", "code": "1870"},
+    {"name": "Sierre"},
+    {"name": "Sion"},
+    {"name": "Martigny"},
+    {"name": "Monthey"},
 ]
 
 bot = Bot(token=TOKEN)
@@ -47,11 +47,7 @@ def get_weather_for_city(city):
         return f"{city['name']} : Erreur récupération météo"
 
 async def send_weather():
-    messages = []
-    for city in CITIES:
-        weather = await asyncio.to_thread(get_weather_for_city, city)
-        messages.append(weather)
-    msg = "\n\n".join(messages)
+    msg = "\n\n".join(get_weather_for_city(c) for c in CITIES)
     await bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ===================== NEWS =====================
@@ -60,7 +56,7 @@ RESET_INTERVAL = 24 * 3600
 
 def load_seen_news():
     if os.path.exists(SEEN_NEWS_FILE):
-        with open(SEEN_NEWS_FILE, "r") as f:
+        with open(SEEN_NEWS_FILE) as f:
             data = json.load(f)
             if time.time() - data.get("ts", 0) > RESET_INTERVAL:
                 return set()
@@ -75,27 +71,23 @@ async def send_news():
     seen = load_seen_news()
     new_articles = []
 
-    # FR toutes catégories
-    fr_data = await asyncio.to_thread(requests.get, f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}", timeout=10)
-    new_articles.extend(fr_data.json().get("articles", []))
+    url_fr = f"https://newsapi.org/v2/top-headlines?language=fr&pageSize=15&apiKey={NEWS_API_KEY}"
+    new_articles.extend(requests.get(url_fr, timeout=10).json().get("articles", []))
 
-    # EN catégories health, science, technology
     for cat in ["health", "science", "technology"]:
-        en_data = await asyncio.to_thread(requests.get, f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}", timeout=10)
-        new_articles.extend(en_data.json().get("articles", []))
+        url_en = f"https://newsapi.org/v2/top-headlines?language=en&category={cat}&pageSize=10&apiKey={NEWS_API_KEY}"
+        new_articles.extend(requests.get(url_en, timeout=10).json().get("articles", []))
 
     for art in new_articles:
         url = art.get("url")
         if not url or url in seen:
             continue
-
         seen.add(url)
 
         title = art.get("title", "Sans titre")
         desc = art.get("description", "")
         link = url
         img = art.get("urlToImage")
-
         msg = f"{title}\n{desc}\n{link}"
 
         try:
@@ -114,7 +106,7 @@ SEEN_QUOTES_FILE = "seen_quotes.json"
 
 def load_seen_quotes():
     if os.path.exists(SEEN_QUOTES_FILE):
-        with open(SEEN_QUOTES_FILE, "r") as f:
+        with open(SEEN_QUOTES_FILE) as f:
             data = json.load(f)
             return set(data.get("ids", []))
     return set()
@@ -126,18 +118,15 @@ def save_seen_quotes(seen):
 async def send_quote():
     seen = load_seen_quotes()
     for _ in range(5):
-        r = await asyncio.to_thread(requests.get, "https://api.quotable.io/random", timeout=15, verify=False)
+        r = requests.get("https://api.quotable.io/random", timeout=15, verify=False)
         data = r.json()
         cid = data.get("_id")
         if cid in seen:
             continue
-
         original = data.get("content")
         author = data.get("author", "Inconnu")
-        traduction = await asyncio.to_thread(GoogleTranslator(source='en', target='fr').translate, original)
-
+        traduction = GoogleTranslator(source='en', target='fr').translate(original)
         msg = f"Citation originale :\n{original}\n\nTraduction française :\n{traduction} — {author}"
-
         await bot.send_message(chat_id=CHAT_ID, text=msg)
         seen.add(cid)
         save_seen_quotes(seen)
@@ -149,29 +138,23 @@ async def scheduler_loop():
         try:
             await asyncio.gather(send_quote(), send_weather(), send_news())
         except Exception as e:
-            logging.error(f"Erreur dans scheduler_loop: {e}")
+            logging.error(f"Erreur scheduler: {e}")
         await asyncio.sleep(5*60)
 
-# ===================== KEEP ALIVE =====================
-async def handle(request):
-    return web.Response(text="Bot is alive")
+# ===================== KEEP ALIVE / AUTOPING =====================
+async def keep_awake():
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.get("https://citations-meteo-news.onrender.com/")
+        except:
+            pass
+        await asyncio.sleep(300)  # toutes les 5 minutes
 
 # ===================== MAIN =====================
 async def main():
-    # Lancer le scheduler
     asyncio.create_task(scheduler_loop())
-
-    # Lancer le serveur web aiohttp
-    app = web.Application()
-    app.add_routes([web.get('/', handle)])
-    port = int(os.environ.get("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logging.info(f"Server started on port {port}")
-
-    # Boucle infinie pour ne pas quitter
+    asyncio.create_task(keep_awake())
     while True:
         await asyncio.sleep(3600)
 
